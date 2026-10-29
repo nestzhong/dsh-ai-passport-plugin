@@ -457,7 +457,7 @@ window.__ModuleLoader__.load({
                         ? h(
                             'div',
                             { className: 'ap-muted', style: { marginTop: 8, fontSize: 11, lineHeight: 1.5 } },
-                            `适配器 ${state.diagnose.adapterState ?? '未上报'} · 桥进程 ${state.diagnose.childRunning ? '运行中' : '未运行'} · noble ${state.diagnose.noble ?? '未加载'}`,
+                            `适配器 ${state.diagnose.adapterState ?? '未上报'} · 后端 ${state.diagnose.bindings ?? '—'} · 桥进程 ${state.diagnose.childRunning ? '运行中' : '未运行'} · noble ${state.diagnose.noble ?? '未加载'}`,
                           )
                         : null,
                     ),

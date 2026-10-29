@@ -71,9 +71,11 @@ git clone -b feature/dsh-passport \
 
 ## 快速开始
 
-前置：DSH 桌面版（macOS 或 Windows）、Node ≥ 20。BLE 走 noble 原生后端：
+前置：Node ≥ 20，以及一台装了 DSH 的主机——桌面版（macOS / Windows），
+或 Linux（含树莓派）上的 `dsh web`。BLE 走 noble 原生后端：
 macOS 限 Apple Silicon；Windows 需 Windows 10 1703+（x64，noble 有 win32-x64 预编译；
-ARM64 需源码编译，见 [docs/08](docs/08-Windows反馈清单.md)）。
+ARM64 需源码编译，见 [docs/08](docs/08-Windows反馈清单.md)）；Linux 见
+[docs/09](docs/09-Linux与树莓派.md)。
 
 ```bash
 # 0) clone 本仓库（固件不需要时可不 clone）
@@ -93,10 +95,68 @@ npm test
 
 > Windows 也可用等价入口：`powershell -ExecutionPolicy Bypass -File tools\install-plugin-to-dsh.ps1`。
 >
-> 脚本对每个 profile 做 `node_modules/dsh-ai-passport -> 本仓库源码` 的链接
-> （macOS 用符号链接；Windows 用目录 junction，**无需**管理员权限；被机器策略禁止时
-> 自动降级为复制并明确提示），改源码即时生效。`desktop` profile 由 Electron 独占管理
-> （`dsh plugin` CLI 拒绝操作），因此不走 CLI，手工链接是唯一可靠的开发安装方式。
+> 脚本对每个 profile 做两件事，缺一不可：
+>
+> 1. 建立 `node_modules/dsh-ai-passport -> 本仓库源码` 的链接
+>    （macOS 用符号链接；Windows 用目录 junction，**无需**管理员权限；被机器策略禁止时
+>    自动降级为复制并明确提示），改源码即时生效。
+> 2. 把 `dsh-ai-passport` 登记进该 profile `package.json` 的 `dsh.profile.bundles`（幂等）。
+>    **这一步漏了就等于没装**：DSH 只按 bundles 顺序叠加 patch 层，链接在 node_modules
+>    里但不在 bundles 里的包不会被加载，现象是"装完了却看不到任何面板"。
+>
+> `desktop` profile 由 Electron 独占管理（`dsh plugin` CLI 拒绝操作），因此不走 CLI，手工链接是唯一可靠的开发安装方式。
+> **首次登记后必须重启 DSH**（bundles 只在启动时读取）。
+>
+> 3. 语音识别是 DSH 的**可选子系统**，默认没挂。设备语音输入要用它时，
+>    在 `~/.dsh/profiles/desktop/cordis.patch.yml` 末尾追加下面两段，然后重启 DSH：
+>
+>    ```yaml
+>    - insert:
+>        - id: speech-to-text
+>          name: "@deepseek-ai/dsh-experimental-speech-to-text"
+>          config:
+>            defaultProvider: sensevoice-local
+>            language: zh
+>        - id: speech-to-text-sensevoice
+>          name: "@deepseek-ai/dsh-experimental-speech-to-text-sensevoice"
+>          config:
+>            dataRoot: !!js dshHomePath('speech-to-text', 'sensevoice')
+>    ```
+>
+>    没挂的话，挂件语音区会一直提示「当前 DSH 没有启用语音识别服务（ctx.speechToText 不存在）」。
+>    这两个包是 DSH 应用内置的（服务 + 本地 SenseVoice 提供者），不需要 `pnpm install`。
+>
+>    ⚠ **不要**改用 `@deepseek-ai/dsh-experimental-voice-input-bundle`。它在 DSH
+>    `0.2.1-rc.3` 的 desktop profile 上实测会让整个应用起不来：客户端条目
+>    `@deepseek-ai/dsh-experimental-client-ui-voice-input` 激活失败，报
+>    `web boot: 1 entry did not activate`。我们只需要 host 侧的识别服务，
+>    DSH 自带的录音按钮不是必需的。
+
+### Linux / 树莓派
+
+在 Linux（含 Raspberry Pi OS 64 位）上装的是**宿主侧插件**，DSH 用 `dsh web` 跑，
+设备仍然通过 BLE 直连这台机器：
+
+```bash
+npm install                      # 会顺带装可选依赖 dbus-next
+npm run install-plugin -- web    # Linux 上通常只有 web profile
+NOBLE_BINDINGS=dbus dsh web --host 127.0.0.1
+```
+
+两个必须知道的点：
+
+1. **BLE 后端**。Linux 上 noble 有两个后端，插件**默认选 `dbus`**（走 BlueZ 的
+   `org.bluez` D-Bus 接口）：普通用户就能扫描，**不需要 root**，还能从广播里拿到
+   设备名。若 `dbus-next` 缺失就会退回 `hci`，而 `hci` 需要 root 或 `CAP_NET_RAW`，
+   否则适配器状态一直停在 `unknown`、点「扫描并连接」后**一直转圈却扫不到任何设备**
+   （树莓派 5 实测）。坚持用 `hci` 的话：`sudo setcap cap_net_raw+eip "$(which node)"`
+   ——注意 nvm 升级 Node 后这个能力会丢，要重设。
+2. **面板只绑回环**。`--host 127.0.0.1` 时面板只能在这台机器上打开；从电脑上看走
+   `ssh -L 3080:127.0.0.1:3080 pi@pi5`，然后访问 `http://127.0.0.1:3080/dsh-passport`。
+
+已在树莓派 5（Debian 13 / BlueZ 5.82 / Node 22 / DSH 0.2.1-rc.2）上实测：
+插件加载、面板、Web 挂件、语音 provider 与 BLE 扫描全部正常。
+细节与排障见 [docs/09](docs/09-Linux与树莓派.md)。
 
 装好后打开控制面板（DSH 内置 webserver）：
 
@@ -179,6 +239,7 @@ http://127.0.0.1:19387/dsh-passport
 | [06-设备端问答与语音直发-设计](docs/06-设备端问答与语音直发-设计.md) | 设备端问答与语音直发 |
 | [07-设备端验收用例](docs/07-设备端验收用例.md) | 逐项验收表与真机实测记录 |
 | [08-Windows反馈清单](docs/08-Windows反馈清单.md) | Windows 客户端适配说明、已知边界、用户反馈清单 |
+| [09-Linux与树莓派](docs/09-Linux与树莓派.md) | Linux 安装、BLE 后端选择（dbus/hci）、树莓派实测与排障 |
 
 ## 开发须知
 

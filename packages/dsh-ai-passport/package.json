@@ -51,6 +51,9 @@
   "dependencies": {
     "@stoprocent/noble": "^2.8.0"
   },
+  "optionalDependencies": {
+    "dbus-next": "^0.10.2"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "@stoprocent/noble"

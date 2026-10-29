@@ -57,6 +57,8 @@ export class BridgeProcessTransport extends Transport {
     this.intentionalStop = false
     /** 桥进程上报的 noble 实现名，用于诊断显示。 */
     this.nobleImplementation = null
+    /** 桥进程上报的实际后端（Linux: dbus / hci），用于诊断"扫不到设备"。 */
+    this.bindingBackend = null
     /** 诊断：桥进程报告的适配器状态（poweredOn / poweredOff / unauthorized / unknown…）。 */
     this.adapterState = null
     /** 诊断：最近一次失败的原因（探测/启动/命令），面板与 curl 都读它。 */
@@ -79,6 +81,8 @@ export class BridgeProcessTransport extends Transport {
       childRunning: Boolean(this.child && this.child.exitCode === null),
       noble: this.nobleImplementation,
       adapterState: this.adapterState,
+      /** 实际使用的 noble 后端（Linux: dbus / hci）。诊断"扫不到设备"第一眼要看它。 */
+      bindings: this.bindingBackend ?? null,
       lastError: this.lastBridgeError,
     }
   }
@@ -169,7 +173,8 @@ export class BridgeProcessTransport extends Transport {
       this.#scheduleRestart()
     })
 
-    await this.#request('init')
+    const init = await this.#request('init')
+    this.bindingBackend = init?.bindings ?? this.bindingBackend
   }
 
   #scheduleRestart() {

@@ -20,6 +20,7 @@
 import { createInterface } from 'node:readline'
 
 import { ADV, DEVICE_NAME, SHORT_DEVICE_NAME, PROTOCOL_VERSION, UUID } from '../protocol/constants.js'
+import { selectBindings, applyBindings } from './bindings-choice.js'
 
 const MOCK = process.argv.includes('--mock')
 
@@ -115,6 +116,14 @@ function stateError(state) {
   }
 }
 
+/** 适配器起不来时，按后端给出可执行的下一步（Linux 的权限坑见 bindings-choice.js）。 */
+function platformHint(bindings) {
+  const needsHciHint = bindings?.reason === 'linux-no-dbus' || bindings?.backend === 'hci'
+  return needsHciHint
+    ? '（Linux：raw HCI 后端需要 root 或 CAP_NET_RAW；推荐 npm install dbus-next 走 D-Bus 后端）'
+    : ''
+}
+
 /** 等待适配器进入 poweredOn；超时明确报错而不是永远挂着。 */
 function waitForPoweredOn(noble, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
@@ -157,6 +166,8 @@ class Bridge {
   constructor() {
     this.noble = null
     this.nobleName = null
+    /** 本次桥进程实际使用的后端（hci / dbus / mac / win），由 init 回包带回。 */
+    this.bindings = null
     this.peripheral = null
     this.characteristics = { rx: null, tx: null, voice: null, ctrl: null }
     this.scanning = false
@@ -188,10 +199,32 @@ class Bridge {
       log('info', '以 --mock 模式启动：不加载 noble，不访问硬件')
       return
     }
+    // ★ 后端选择必须发生在 import noble **之前**：noble 在模块加载时读环境变量。
+    //   Linux 上默认挑 dbus（免 root），详见 bindings-choice.js 顶部说明。
+    const bindings = selectBindings()
+    applyBindings(bindings)
+    if (bindings.note) log('info', bindings.note)
+    this.bindings = bindings.backend ?? 'platform-default'
     const { noble, name } = await loadNoble()
     this.noble = noble
     this.nobleName = name
-    await waitForPoweredOn(noble)
+    // 兜底：后端加载完但适配器最终没进 poweredOn 时，宁可明确报错，也不让上层一直转圈。
+    // （普通用户 + hci 后端的典型症状就是这条：状态停在 unknown、扫描静默不动。）
+    // 超时来自 waitForPoweredOn，未就绪来自它提前 resolve 的极端情况，两条都要带上平台提示。
+    const hint = platformHint(bindings)
+    try {
+      await waitForPoweredOn(noble)
+      if (!stateIsReady(noble.state)) {
+        const [code, message] = stateError(noble.state)
+        throw Object.assign(new Error(`${message}${hint}`), { code })
+      }
+    } catch (error) {
+      if (!hint || String(error.message).includes(hint)) throw error
+      throw Object.assign(new Error(`${error.message}${hint}`), {
+        code: error.code ?? 'unknown',
+        cause: error,
+      })
+    }
     this.#wireNobleEvents()
   }
 
@@ -697,7 +730,7 @@ async function handle(request) {
     switch (cmd) {
       case 'init':
         await bridge.init()
-        reply(id, { noble: bridge.nobleName, mock: MOCK })
+        reply(id, { noble: bridge.nobleName, mock: MOCK, bindings: bridge.bindings })
         break
       case 'scan':
         await bridge.startScan(request.filter)
